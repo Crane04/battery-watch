@@ -11,6 +11,17 @@ The project has two clients that share the same protocol code:
 | **iPhone app** | project root (`App.tsx`, `src/`) | iOS, built with Expo + React Native |
 | **Chrome extension** | [`extension/`](extension/) | Chrome or Edge on macOS, Windows, Linux |
 
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/dashboard.jpeg" width="280" alt="Battery Watch dashboard showing 51% charge, voltage, current, stored Ah, temperature and four cell voltages"></td>
+    <td align="center"><img src="docs/screenshots/alerts.jpeg" width="280" alt="Battery Watch alerts list with charging and discharging alerts at 100, 85, 50, 30 and 20 percent"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Dashboard</b>: live charge with alert markers under the battery, pack stats, and per-cell voltages</td>
+    <td align="center"><b>Alerts</b>: ▲ fires while charging, ▼ while discharging; colour shows how low the level is</td>
+  </tr>
+</table>
+
 ---
 
 ## Why it exists
@@ -141,6 +152,7 @@ Alerts and their fired state are saved on the device, so they survive restarts.
 
 ```
 battery-watch/
+├── docs/screenshots/ # README images
 ├── App.tsx           # iPhone UI: charge display, stats, cells, alerts, alert editor
 ├── index.ts          # Expo entry point
 ├── app.json          # Expo config: Bluetooth background mode, permissions, plugins
