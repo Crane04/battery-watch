@@ -1,0 +1,26 @@
+{
+  "name": "battery-watch",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "private": true,
+  "scripts": {
+    "start": "expo start --dev-client",
+    "ios": "expo run:ios",
+    "android": "expo run:android",
+    "prebuild": "expo prebuild",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo": "~55.0.31",
+    "expo-dev-client": "~55.0.40",
+    "expo-notifications": "~55.0.27",
+    "react": "19.2.0",
+    "react-native": "0.83.10",
+    "react-native-ble-plx": "^3.5.1"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.4",
+    "typescript": "~5.9.2"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Battery Watch",
+    "slug": "battery-watch",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "bundleIdentifier": "dev.mayowa.batterywatch",
+      "supportsTablet": false,
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "bluetooth-central"
+        ],
+        "NSBluetoothAlwaysUsageDescription": "Battery Watch reads your battery's charge level over Bluetooth to alert you at your chosen percentages."
+      },
+      "appleTeamId": "KUFS7DTNH9"
+    },
+    "plugins": [
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": true,
+          "modes": [
+            "central"
+          ],
+          "bluetoothAlwaysPermission": "Battery Watch reads your battery's charge level over Bluetooth to alert you at your chosen percentages."
+        }
+      ],
+      "expo-notifications"
+    ]
+  }
+}

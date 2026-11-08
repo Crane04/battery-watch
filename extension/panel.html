@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Battery Watch</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <main class="scroll">
+    <header class="header">
+      <h1 class="title">Battery Watch</h1>
+      <div class="pill" id="pill"><span class="dot"></span><span class="pill-text" id="pill-text">Offline</span></div>
+    </header>
+
+    <div class="unsupported card warn" id="unsupported" hidden>
+      <h2 class="card-title">Bluetooth isn't available here</h2>
+      <p>This needs Chrome or Edge on a computer with Bluetooth turned on. On a Mac, also check
+        System Settings → Privacy &amp; Security → Bluetooth and allow Chrome.</p>
+    </div>
+
+    <section class="hero">
+      <div class="battery-wrap">
+        <div class="battery">
+          <div class="body" id="bat-body">
+            <div class="fill" id="bat-fill"><div class="shine"></div></div>
+            <div class="seg" style="left:20%"></div>
+            <div class="seg" style="left:40%"></div>
+            <div class="seg" style="left:60%"></div>
+            <div class="seg" style="left:80%"></div>
+            <div class="bolt" id="bat-bolt" hidden>⚡</div>
+          </div>
+          <div class="nub" id="bat-nub"></div>
+        </div>
+        <div class="markers" id="markers"></div>
+      </div>
+      <div class="next-pill" id="next-pill" hidden></div>
+      <div class="soc" id="soc">--<span class="soc-pct">%</span></div>
+      <div class="headline" id="headline">Not connected</div>
+      <div class="subline" id="subline">Click connect to start watching</div>
+    </section>
+
+    <section class="grid" id="stats" hidden></section>
+
+    <section class="card warn" id="protections" hidden></section>
+
+    <section class="card" id="cells-card" hidden>
+      <div class="row-between">
+        <h2 class="card-title">Cells</h2>
+        <span class="badge" id="cell-delta"></span>
+      </div>
+      <div class="cells" id="cells"></div>
+    </section>
+
+    <section class="card">
+      <div class="row-between">
+        <div>
+          <h2 class="card-title">Alerts</h2>
+          <div class="card-sub" id="alerts-sub"></div>
+        </div>
+        <div class="header-btns">
+          <button class="edit-btn" id="edit-btn">Edit</button>
+          <button class="add-btn" id="add-btn">+ New</button>
+        </div>
+      </div>
+      <div id="alerts"></div>
+    </section>
+
+    <button class="btn" id="connect">Connect &amp; watch</button>
+    <div class="error" id="error" role="alert" hidden></div>
+    <div class="links">
+      <button class="link" id="show-all">Can't find it? Show all devices</button>
+    </div>
+
+    <p class="foot">Keep this tab open while watching (it's fine in the background). Closing it ends the Bluetooth connection.
+      Alerts fire once per crossing.</p>
+  </main>
+
+  <div class="backdrop" id="sheet-backdrop" hidden>
+    <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <div class="grabber"></div>
+      <div class="row-between">
+        <button class="link-btn" id="sheet-cancel">Cancel</button>
+        <h2 class="sheet-title" id="sheet-title">New alert</h2>
+        <button class="link-btn save" id="sheet-save">Save</button>
+      </div>
+
+      <div class="segment">
+        <button class="seg-btn" data-dir="down">▼&nbsp; Dropping</button>
+        <button class="seg-btn" data-dir="up">▲&nbsp; Charging</button>
+      </div>
+
+      <div class="dial">
+        <button class="step-btn" id="minus" aria-label="Lower">−</button>
+        <div class="big-pct" id="big-pct">20<span>%</span></div>
+        <button class="step-btn" id="plus" aria-label="Higher">+</button>
+      </div>
+      <div class="hint">Click ± for 5%. Shift-click for 1%.</div>
+
+      <div class="presets" id="presets"></div>
+
+      <label class="field-label" for="sheet-name">NAME</label>
+      <input class="input" id="sheet-name" type="text" autocomplete="off">
+      <div class="preview" id="sheet-preview"></div>
+
+      <button class="delete" id="sheet-delete">Delete alert</button>
+    </div>
+  </div>
+
+  <script type="module" src="panel.js"></script>
+</body>
+</html>
