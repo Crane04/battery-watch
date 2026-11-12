@@ -100,6 +100,14 @@ h1, h2 { margin: 0; }
 
 /* Alerts */
 .header-btns { display: flex; align-items: center; gap: 8px; }
+.out-btn { padding: 8px 16px; border-radius: 999px; font-weight: 800; color: var(--c);
+  background: color-mix(in srgb, var(--c) 13%, transparent); }
+.out-btn:hover { filter: brightness(1.15); }
+.out-btn:disabled { opacity: 0.6; cursor: default; }
+.card.output-off { border-color: color-mix(in srgb, var(--amber) 55%, transparent); }
+.card .error { margin-top: 0; }
+.toggle-title { font-weight: 700; }
+.switch.amber input:checked + span { background: var(--amber); }
 .add-btn { padding: 7px 14px; border-radius: 999px; background: color-mix(in srgb, var(--blue) 13%, transparent); color: var(--blue); font-weight: 800; }
 .edit-btn { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); font-weight: 800; }
 .edit-btn.on { background: var(--card-hi); color: var(--text); }

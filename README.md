@@ -20,6 +20,14 @@ The project has two clients that share the same protocol code:
     <td align="center"><b>Dashboard</b>: live charge with alert markers under the battery, pack stats, and per-cell voltages</td>
     <td align="center"><b>Alerts</b>: ▲ fires while charging, ▼ while discharging; colour shows how low the level is</td>
   </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/output.jpeg" width="280" alt="Battery output card showing output on and a Turn off button"></td>
+    <td align="center"><img src="docs/screenshots/cutoff.jpeg" width="280" alt="Edit alert sheet with the Cut off output switch turned on for a 50% dropping alert"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Battery output</b>: switch the battery's output (and the inverter) off or on</td>
+    <td align="center"><b>Auto cut-off</b>: a ▼ alert can switch the output off when it fires</td>
+  </tr>
 </table>
 
 ---
@@ -36,9 +44,27 @@ The official BMS app shows the numbers but won't tell you when something happens
 - **Custom alerts**: pick a percentage, a direction (▼ while discharging or ▲ while charging) and a label. Default alerts are 50%, 30%, 20% going down, and 100% going up.
 - **No notification spam**: each alert fires once when the level is crossed, and re-arms only after the charge moves 3% back the other way.
 - **Breaks through Focus** (iPhone): alerts are sent as time-sensitive notifications.
+- **Output cut-off** (iPhone): switch the battery's output off and on from the app, or have a ▼ alert cut it automatically. Turning the output off starves the inverter of DC so it shuts down. See [Cutting off the output](#cutting-off-the-output).
 - **Protection warnings**: shows when the BMS has cut power because of over/under voltage, temperature, overcurrent, or a short circuit.
 - **Auto-reconnect**: reconnects on its own if the Bluetooth link drops, and remembers your battery for quicker connections next time.
 - **Background monitoring** (iPhone): keeps reading the battery while the app is in the background or the phone is locked.
+
+## Cutting off the output
+
+Battery Watch doesn't talk to the inverter. It tells the BMS to open its **discharge MOSFET** (JBD register `0xE1`), which disconnects the battery's output. The inverter loses its DC supply and turns off. The BMS keeps running, so Bluetooth stays up and you can switch the output back on from the app. Charging stays enabled the whole time.
+
+- **Manual**: the **Battery output** card has a Turn off / Turn on button.
+- **Automatic**: when you edit a ▼ alert, turn on **Cut off output**. When that alert fires, the output is switched off and the notification says so. It won't cut again until the charge recovers 3% above the level, so turning it back on by hand sticks.
+
+If the BMS ignores the plain write, the app retries inside factory mode and exits without saving. After each command it reads the BMS back and reports what actually happened.
+
+Things to know:
+
+- **Reduce the load first** if you can. Cutting under heavy load is the same thing the BMS does on undervoltage, but it's harder on the MOSFETs.
+- **Turning back on can fail.** The inverter's empty input capacitors draw a big inrush that may trip short-circuit protection. Wait a few seconds and try again. Some inverters also need their power button pressed afterwards.
+- **Hybrid inverters** fed by grid or solar may keep running with the battery cut.
+- **Don't rely on it as your only protection.** Auto cut-off only works while the app is connected. Keep the BMS's own undervoltage protection set as a hard floor.
+- **Test it first** with the inverter idle and no load.
 
 ---
 

@@ -1,5 +1,5 @@
 import { jbd } from './ble.js';
-import { hoursToPercent } from './jbd.js';
+import { hoursToPercent, SOFTWARE_LOCK } from './jbd.js';
 import { loadTargets, saveTargets, checkTargets } from './alerts.js';
 
 const DEVICE_KEY = 'device.id';
@@ -48,6 +48,8 @@ let watching = false;
 let forcePick = false;
 let listEditing = false;
 let armedDelete = null; // alert id showing its red Delete button
+let outputBusy = false;
+let outputError = null;
 
 // ---- toolbar badge ----
 let port = null;
@@ -83,7 +85,7 @@ jbd.onReading((r) => {
   avg = avg === null || Math.sign(avg) !== Math.sign(cur) || Math.abs(cur) < 0.05
     ? cur
     : avg * 0.85 + cur * 0.15;
-  checkTargets(r.info, targets);
+  checkTargets(r.info, targets, autoCutOff);
   updateBadge(r.info);
   render();
 });
@@ -183,11 +185,29 @@ function render() {
   }
 
   // protections
+  // (the software lock just means output was switched off on purpose; the output card shows that)
+  const faults = info ? info.protections.filter((p) => p !== SOFTWARE_LOCK) : [];
   const prot = $('protections');
-  prot.hidden = !info || info.protections.length === 0;
+  prot.hidden = faults.length === 0;
   if (!prot.hidden) {
     prot.replaceChildren(el('h2', 'card-title', '⚠ Protection active'),
-      ...info.protections.map((p) => el('div', '', p)));
+      ...faults.map((p) => el('div', '', p)));
+  }
+
+  // battery output
+  $('output-card').hidden = !info || !connected;
+  if (info) {
+    const on = info.dischargeMos;
+    $('output-card').classList.toggle('output-off', !on);
+    const sub = $('output-sub');
+    sub.textContent = on ? 'On · inverter has power' : 'Off · inverter has no battery power';
+    sub.style.color = on ? C.green : C.amber;
+    const ob = $('output-btn');
+    ob.textContent = outputBusy ? 'Working…' : on ? 'Turn off' : 'Turn on';
+    ob.style.setProperty('--c', on ? C.red : C.green);
+    ob.disabled = outputBusy;
+    $('output-error').textContent = outputError ?? '';
+    $('output-error').hidden = !outputError;
   }
 
   // cells
@@ -291,6 +311,11 @@ function renderAlerts(info) {
 
     const text = el('div', 'alert-text');
     const sub = el('div', 'alert-sub', t.direction === 'up' ? `Charging to ${t.percent}%` : `Dropping below ${t.percent}%`);
+    if (t.direction === 'down' && t.cutoff) {
+      const c = el('span', '', '  ·  cuts output');
+      c.style.color = C.amber;
+      sub.append(c);
+    }
     const eta = alertEta(t, info);
     if (eta) {
       const e = el('span', '', `  ·  in ~${eta}`);
@@ -358,6 +383,35 @@ function deleteAlert(id) {
   render();
 }
 
+// ---- battery output ----
+async function autoCutOff() {
+  try { await jbd.setDischarge(false); return null; } catch (e) { return e?.message ?? 'Unknown error.'; }
+}
+
+async function switchOutput(on) {
+  outputBusy = true;
+  outputError = null;
+  render();
+  try {
+    await jbd.setDischarge(on);
+  } catch (e) {
+    outputError = (e?.message ?? 'Unknown error.') + (on
+      ? " The inverter's inrush can trip short-circuit protection. Wait a few seconds and try again."
+      : ' Switch the load off at the inverter instead.');
+  } finally {
+    outputBusy = false;
+    render();
+  }
+}
+
+$('output-btn').addEventListener('click', () => {
+  const on = reading?.info.dischargeMos;
+  if (on === undefined) return;
+  if (on && !confirm('Turn battery output off?\n\nThis cuts power to everything on the battery, including the inverter. '
+    + 'Turn heavy loads off first if you can. Charging stays enabled.')) return;
+  switchOutput(!on);
+});
+
 // ---- edit sheet ----
 let sheetTarget = null; // 'new' or the alert being edited
 let sheetPct = 20;
@@ -367,8 +421,11 @@ let deleteArmed = false;
 function openSheet(target) {
   sheetTarget = target;
   deleteArmed = false;
-  if (target === 'new') { sheetPct = 20; sheetDir = 'down'; $('sheet-name').value = ''; }
-  else { sheetPct = target.percent; sheetDir = target.direction; $('sheet-name').value = target.label; }
+  if (target === 'new') { sheetPct = 20; sheetDir = 'down'; $('sheet-name').value = ''; $('sheet-cutoff').checked = false; }
+  else {
+    sheetPct = target.percent; sheetDir = target.direction; $('sheet-name').value = target.label;
+    $('sheet-cutoff').checked = !!target.cutoff;
+  }
   $('sheet-backdrop').hidden = false;
   renderSheet();
 }
@@ -395,8 +452,11 @@ function renderSheet() {
     return b;
   }));
   $('sheet-name').placeholder = fallbackLabel();
+  const cuts = sheetDir === 'down' && $('sheet-cutoff').checked;
+  $('cutoff-row').hidden = sheetDir !== 'down';
   $('sheet-preview').textContent =
-    `You'll be notified when the battery ${sheetDir === 'up' ? 'charges up to' : 'drops to'} ${sheetPct}%.`;
+    `You'll be notified when the battery ${sheetDir === 'up' ? 'charges up to' : 'drops to'} ${sheetPct}%`
+    + (cuts ? ', and its output will be switched off.' : '.');
   const del = $('sheet-delete');
   del.hidden = isNew;
   del.textContent = deleteArmed ? 'Click again to delete' : 'Delete alert';
@@ -410,6 +470,7 @@ function saveSheet() {
     direction: sheetDir,
     label: $('sheet-name').value.trim() || fallbackLabel(),
     enabled: isNew ? true : sheetTarget.enabled,
+    cutoff: sheetDir === 'down' && $('sheet-cutoff').checked,
   };
   const exists = targets.some((x) => x.id === t.id);
   updateTargets(exists ? targets.map((x) => x.id === t.id ? t : x) : [...targets, t]);
@@ -423,6 +484,7 @@ document.querySelectorAll('.seg-btn').forEach((b) => b.addEventListener('click',
 $('sheet-cancel').addEventListener('click', closeSheet);
 $('sheet-save').addEventListener('click', saveSheet);
 $('sheet-name').addEventListener('input', renderSheet);
+$('sheet-cutoff').addEventListener('change', renderSheet);
 $('sheet-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveSheet(); });
 $('sheet-delete').addEventListener('click', () => {
   if (!deleteArmed) { deleteArmed = true; renderSheet(); return; }

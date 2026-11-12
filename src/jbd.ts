@@ -9,11 +9,30 @@ export const WRITE_UUID = '0000ff02-0000-1000-8000-00805f9b34fb';
 
 export const CMD_BASIC = 0x03;
 export const CMD_CELLS = 0x04;
+export const CMD_MOS = 0xe1; // MOSFET control: data 00 <bits>, bit0 = charge off, bit1 = discharge off
+export const CMD_FACTORY_ENTER = 0x00;
+export const CMD_FACTORY_EXIT = 0x01;
 
 export function buildRead(cmd: number): number[] {
   const chk = (0x10000 - (cmd + 0x00)) & 0xffff;
   return [0xdd, 0xa5, cmd, 0x00, chk >> 8, chk & 0xff, 0x77];
 }
+
+// Write: DD 5A <cmd> <len> <data...> <chk_hi> <chk_lo> 77, checksum over cmd, len and data.
+export function buildWrite(cmd: number, data: number[]): number[] {
+  const chk = checksum([cmd, data.length, ...data]);
+  return [0xdd, 0x5a, cmd, data.length, ...data, chk >> 8, chk & 0xff, 0x77];
+}
+
+// Discharge off => DD 5A E1 02 00 02 FF 1B 77. All on => DD 5A E1 02 00 00 FF 1D 77.
+export function buildMos(chargeOn: boolean, dischargeOn: boolean): number[] {
+  const bits = (chargeOn ? 0 : 0x01) | (dischargeOn ? 0 : 0x02);
+  return buildWrite(CMD_MOS, [0x00, bits]);
+}
+
+// Some firmware ignores 0xE1 unless factory mode is open. Exiting with 00 00 does not save to EEPROM.
+export const FACTORY_ENTER = buildWrite(CMD_FACTORY_ENTER, [0x56, 0x78]);
+export const FACTORY_EXIT = buildWrite(CMD_FACTORY_EXIT, [0x00, 0x00]);
 
 export type Frame = { cmd: number; status: number; data: number[] };
 
@@ -48,6 +67,9 @@ const PROTECTION_BITS = [
   'Frontend IC error',
   'MOS software lock',
 ];
+
+// Set when the MOSFETs were switched off by command rather than by a fault.
+export const SOFTWARE_LOCK = 'MOS software lock';
 
 function checksum(bytes: number[]): number {
   const sum = bytes.reduce((a, b) => a + b, 0);

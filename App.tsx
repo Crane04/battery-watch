@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { jbd, Reading } from './src/ble';
-import { BasicInfo, hoursToPercent } from './src/jbd';
+import { BasicInfo, hoursToPercent, SOFTWARE_LOCK } from './src/jbd';
 import {
   Target, loadTargets, saveTargets, checkTargets, requestNotificationPermission,
 } from './src/alerts';
@@ -63,10 +63,43 @@ export default function App() {
         ? cur
         : prev * 0.85 + cur * 0.15;
       setAvgCurrent(avgRef.current);
-      checkTargets(r.info, targetsRef.current);
+      checkTargets(r.info, targetsRef.current, autoCutOff);
     });
     return () => { offS(); offR(); };
   }, []);
+
+  const [outputBusy, setOutputBusy] = useState(false);
+
+  const autoCutOff = async () => {
+    try { await jbd.setDischarge(false); return null; } catch (e: any) { return e?.message ?? 'Unknown error.'; }
+  };
+
+  const switchOutput = async (on: boolean) => {
+    setOutputBusy(true);
+    try {
+      await jbd.setDischarge(on);
+    } catch (e: any) {
+      Alert.alert(
+        on ? "Couldn't turn output on" : "Couldn't turn output off",
+        (e?.message ?? 'Unknown error.') + (on
+          ? '\n\nThe inverter\'s inrush can trip short-circuit protection. Wait a few seconds and try again.'
+          : '\n\nSwitch the load off at the inverter instead.'),
+      );
+    } finally {
+      setOutputBusy(false);
+    }
+  };
+
+  const confirmOutputOff = () => {
+    Alert.alert(
+      'Turn battery output off?',
+      'This cuts power to everything on the battery, including the inverter. Turn heavy loads off first if you can. Charging stays enabled.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Turn off', style: 'destructive', onPress: () => switchOutput(false) },
+      ],
+    );
+  };
 
   const updateTargets = (next: Target[]) => {
     const sorted = [...next].sort((a, b) => b.percent - a.percent);
@@ -204,10 +237,35 @@ export default function App() {
           </View>
         )}
 
-        {info && info.protections.length > 0 && (
+        {info && info.protections.some((p) => p !== SOFTWARE_LOCK) && (
           <View style={[s.card, s.warnCard]}>
             <Text style={[s.cardTitle, { color: C.red }]}>⚠ Protection active</Text>
-            {info.protections.map((p) => <Text key={p} style={s.warnText}>{p}</Text>)}
+            {info.protections.filter((p) => p !== SOFTWARE_LOCK).map((p) => <Text key={p} style={s.warnText}>{p}</Text>)}
+          </View>
+        )}
+
+        {info && (
+          <View style={[s.card, !info.dischargeMos && { borderColor: C.amber + '88' }]}>
+            <View style={s.rowBetween}>
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={s.cardTitle}>Battery output</Text>
+                <Text style={[s.cardSub, { color: info.dischargeMos ? C.green : C.amber }]}>
+                  {info.dischargeMos ? 'On · inverter has power' : 'Off · inverter has no battery power'}
+                </Text>
+              </View>
+              <Pressable
+                disabled={outputBusy}
+                onPress={() => info.dischargeMos ? confirmOutputOff() : switchOutput(true)}
+                style={({ pressed }) => [
+                  s.outBtn,
+                  { backgroundColor: (info.dischargeMos ? C.red : C.green) + '22' },
+                  (pressed || outputBusy) && { opacity: 0.6 },
+                ]}>
+                <Text style={[s.outText, { color: info.dischargeMos ? C.red : C.green }]}>
+                  {outputBusy ? 'Working…' : info.dischargeMos ? 'Turn off' : 'Turn on'}
+                </Text>
+              </Pressable>
+            </View>
           </View>
         )}
 
@@ -280,6 +338,7 @@ export default function App() {
                   <Text style={[s.alertTitle, !t.enabled && { color: C.dim }]} numberOfLines={1}>{t.label}</Text>
                   <Text style={s.alertSub} numberOfLines={1}>
                     {t.direction === 'up' ? `Charging to ${t.percent}%` : `Dropping below ${t.percent}%`}
+                    {t.direction === 'down' && t.cutoff && <Text style={{ color: C.amber }}>  ·  cuts output</Text>}
                     {eta && <Text style={{ color: col }}>  ·  in ~{eta}</Text>}
                   </Text>
                 </View>
@@ -376,11 +435,12 @@ function AlertSheet({ target, onClose, onSave, onDelete }: {
   const [percent, setPercent] = useState(20);
   const [direction, setDirection] = useState<Target['direction']>('down');
   const [label, setLabel] = useState('');
+  const [cutoff, setCutoff] = useState(false);
 
   useEffect(() => {
     if (!target) return;
-    if (target === 'new') { setPercent(20); setDirection('down'); setLabel(''); }
-    else { setPercent(target.percent); setDirection(target.direction); setLabel(target.label); }
+    if (target === 'new') { setPercent(20); setDirection('down'); setLabel(''); setCutoff(false); }
+    else { setPercent(target.percent); setDirection(target.direction); setLabel(target.label); setCutoff(!!target.cutoff); }
   }, [target]);
 
   const col = direction === 'up' ? C.green : socColor(percent);
@@ -391,6 +451,7 @@ function AlertSheet({ target, onClose, onSave, onDelete }: {
     id: isNew || !target ? `${direction[0]}${percent}-${Date.now()}` : target.id,
     percent, direction, label: label.trim() || fallbackLabel,
     enabled: isNew || !target ? true : target.enabled,
+    cutoff: direction === 'down' && cutoff,
   });
 
   return (
@@ -444,8 +505,18 @@ function AlertSheet({ target, onClose, onSave, onDelete }: {
             placeholderTextColor={C.faint}
             returnKeyType="done"
           />
+          {direction === 'down' && (
+            <View style={s.rowBetween}>
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={sh.toggleTitle}>Cut off output</Text>
+                <Text style={sh.toggleSub}>Switch the battery off (and the inverter with it) when this fires</Text>
+              </View>
+              <Switch value={cutoff} onValueChange={setCutoff} trackColor={{ true: C.amber }} />
+            </View>
+          )}
           <Text style={sh.preview}>
-            You'll be notified when the battery {direction === 'up' ? 'charges up to' : 'drops to'} {percent}%.
+            You'll be notified when the battery {direction === 'up' ? 'charges up to' : 'drops to'} {percent}%
+            {direction === 'down' && cutoff ? ', and its output will be switched off.' : '.'}
           </Text>
 
           {!isNew && target && (
@@ -541,6 +612,8 @@ const sh = StyleSheet.create({
     fontSize: 16, paddingHorizontal: 14, paddingVertical: 12,
   },
   preview: { color: C.dim, fontSize: 13, marginTop: -6 },
+  toggleTitle: { color: C.text, fontSize: 15, fontWeight: '700' },
+  toggleSub: { color: C.dim, fontSize: 12, marginTop: 2 },
   delete: { paddingVertical: 14, borderRadius: 14, alignItems: 'center', backgroundColor: C.red + '18' },
   deleteText: { color: C.red, fontWeight: '800', fontSize: 15 },
 });
@@ -590,6 +663,8 @@ const s = StyleSheet.create({
   cellV: { color: C.text, fontWeight: '700', fontSize: 13, fontVariant: ['tabular-nums'], marginTop: 2 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   cardSub: { color: C.dim, fontSize: 12, marginTop: 2 },
+  outBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 999 },
+  outText: { fontWeight: '800', fontSize: 14 },
   addBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, backgroundColor: C.blue + '22' },
   addText: { color: C.blue, fontWeight: '800', fontSize: 14 },
   empty: { color: C.dim, fontSize: 14, paddingVertical: 8 },

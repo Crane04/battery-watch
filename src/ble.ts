@@ -1,8 +1,9 @@
 import { AppState } from 'react-native';
 import { BleManager, Device, Subscription } from 'react-native-ble-plx';
 import {
-  SERVICE_UUID, NOTIFY_UUID, WRITE_UUID, CMD_BASIC, CMD_CELLS,
-  FrameAssembler, BasicInfo, buildRead, parseBasic, parseCells, b64ToBytes, bytesToB64,
+  SERVICE_UUID, NOTIFY_UUID, WRITE_UUID, CMD_BASIC, CMD_CELLS, CMD_MOS, CMD_FACTORY_ENTER, CMD_FACTORY_EXIT,
+  FrameAssembler, Frame, BasicInfo, buildRead, buildMos, parseBasic, parseCells, b64ToBytes, bytesToB64,
+  FACTORY_ENTER, FACTORY_EXIT,
 } from './jbd';
 
 export type Reading = { info: BasicInfo; cells: number[]; at: number };
@@ -23,7 +24,10 @@ class JbdClient {
   private sub: Subscription | null = null;
   private disconnectSub: Subscription | null = null;
   private asm = new FrameAssembler();
-  private pending: { cmd: number; resolve: (d: number[]) => void } | null = null;
+  private pending: { cmd: number; resolve: (f: Frame) => void } | null = null;
+  // One request in flight at a time, so a MOSFET write can't collide with the poll loop.
+  private queue: Promise<unknown> = Promise.resolve();
+  private lastCells: number[] = [];
   private running = false;
   private listeners = new Set<Listener>();
   private statusListeners = new Set<StatusListener>();
@@ -105,7 +109,7 @@ class JbdClient {
         if (this.pending && this.pending.cmd === f.cmd) {
           const p = this.pending;
           this.pending = null;
-          p.resolve(f.data);
+          p.resolve(f);
         }
       }
     });
@@ -120,17 +124,51 @@ class JbdClient {
     return dev.id;
   }
 
-  private request(cmd: number): Promise<number[]> {
-    return new Promise(async (resolve, reject) => {
+  private send(packet: number[], cmd: number): Promise<Frame> {
+    const run = () => new Promise<Frame>(async (resolve, reject) => {
       if (!this.device) return reject(new Error('Not connected'));
       const t = setTimeout(() => { this.pending = null; reject(new Error('timeout')); }, TIMEOUT_MS);
-      this.pending = { cmd, resolve: (d) => { clearTimeout(t); resolve(d); } };
+      this.pending = { cmd, resolve: (f) => { clearTimeout(t); resolve(f); } };
       try {
-        await this.device.writeCharacteristicWithoutResponseForService(
-          SERVICE_UUID, WRITE_UUID, bytesToB64(buildRead(cmd)),
-        );
+        await this.device.writeCharacteristicWithoutResponseForService(SERVICE_UUID, WRITE_UUID, bytesToB64(packet));
       } catch (e) { clearTimeout(t); this.pending = null; reject(e); }
     });
+    const next = this.queue.then(run, run);
+    this.queue = next.catch(() => {});
+    return next;
+  }
+
+  private async request(cmd: number): Promise<number[]> {
+    return (await this.send(buildRead(cmd), cmd)).data;
+  }
+
+  private async writeMos(dischargeOn: boolean): Promise<boolean> {
+    const f = await this.send(buildMos(true, dischargeOn), CMD_MOS).catch(() => null);
+    return f?.status === 0;
+  }
+
+  // Opens or closes the discharge MOSFET, which cuts or restores power to the inverter.
+  // Charging is always left enabled. Resolves with the BMS's actual state afterwards,
+  // since a write can be accepted but overruled (e.g. a fault, or short-circuit trip on inrush).
+  async setDischarge(on: boolean): Promise<BasicInfo> {
+    if (!this.device) throw new Error('Not connected to the battery');
+    let ok = await this.writeMos(on);
+    if (!ok) {
+      // Older firmware only accepts 0xE1 inside factory mode.
+      await this.send(FACTORY_ENTER, CMD_FACTORY_ENTER).catch(() => {});
+      ok = await this.writeMos(on);
+      await this.send(FACTORY_EXIT, CMD_FACTORY_EXIT).catch(() => {});
+    }
+    // Give the BMS a moment to switch before reading back.
+    await new Promise((res) => setTimeout(res, 400));
+    const info = parseBasic(await this.request(CMD_BASIC));
+    this.listeners.forEach((l) => l({ info, cells: this.lastCells, at: Date.now() }));
+    if (info.dischargeMos !== on) {
+      throw new Error(ok
+        ? `The BMS accepted the command but output is still ${info.dischargeMos ? 'on' : 'off'}.`
+        : 'The BMS did not accept the command.');
+    }
+    return info;
   }
 
   async start(savedId?: string) {
@@ -154,6 +192,7 @@ class JbdClient {
     this.disconnectSub = null;
     this.device = null;
     this.pending = null;
+    this.queue = Promise.resolve();
   }
 
   private async loop() {
@@ -161,6 +200,7 @@ class JbdClient {
       try {
         const info = parseBasic(await this.request(CMD_BASIC));
         const cells = parseCells(await this.request(CMD_CELLS));
+        this.lastCells = cells;
         const r = { info, cells, at: Date.now() };
         this.listeners.forEach((l) => l(r));
       } catch {

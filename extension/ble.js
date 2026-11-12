@@ -1,6 +1,6 @@
 import {
-  SERVICE_UUID, NOTIFY_UUID, WRITE_UUID, CMD_BASIC, CMD_CELLS,
-  FrameAssembler, buildRead, parseBasic, parseCells,
+  SERVICE_UUID, NOTIFY_UUID, WRITE_UUID, CMD_BASIC, CMD_CELLS, CMD_MOS, CMD_FACTORY_ENTER, CMD_FACTORY_EXIT,
+  FrameAssembler, buildRead, buildMos, parseBasic, parseCells, FACTORY_ENTER, FACTORY_EXIT,
 } from './jbd.js';
 
 // Same polling scheme as the app: ask for basic info, then cells, wait, repeat.
@@ -32,6 +32,9 @@ class JbdClient {
   writeChar = null;
   asm = new FrameAssembler();
   pending = null;
+  // One request in flight at a time, so a MOSFET write can't collide with the poll loop.
+  queue = Promise.resolve();
+  lastCells = [];
   running = false;
   loopToken = 0;
   listeners = new Set();
@@ -101,7 +104,7 @@ class JbdClient {
       if (this.pending && this.pending.cmd === f.cmd) {
         const p = this.pending;
         this.pending = null;
-        p.resolve(f.data);
+        p.resolve(f);
       }
     }
   }
@@ -129,13 +132,13 @@ class JbdClient {
     }
   }
 
-  request(cmd) {
-    return new Promise(async (resolve, reject) => {
+  send(packet, cmd) {
+    const run = () => new Promise(async (resolve, reject) => {
       if (!this.writeChar) return reject(new Error('Not connected'));
       const t = setTimeout(() => { this.pending = null; reject(new Error('timeout')); }, TIMEOUT_MS);
-      this.pending = { cmd, resolve: (d) => { clearTimeout(t); resolve(d); } };
+      this.pending = { cmd, resolve: (f) => { clearTimeout(t); resolve(f); } };
       try {
-        const bytes = new Uint8Array(buildRead(cmd));
+        const bytes = new Uint8Array(packet);
         if (this.writeChar.properties.writeWithoutResponse) {
           await this.writeChar.writeValueWithoutResponse(bytes);
         } else {
@@ -143,6 +146,42 @@ class JbdClient {
         }
       } catch (e) { clearTimeout(t); this.pending = null; reject(e); }
     });
+    const next = this.queue.then(run, run);
+    this.queue = next.catch(() => {});
+    return next;
+  }
+
+  async request(cmd) {
+    return (await this.send(buildRead(cmd), cmd)).data;
+  }
+
+  async writeMos(dischargeOn) {
+    const f = await this.send(buildMos(true, dischargeOn), CMD_MOS).catch(() => null);
+    return f?.status === 0;
+  }
+
+  // Opens or closes the discharge MOSFET, which cuts or restores power to the inverter.
+  // Charging is always left enabled. Resolves with the BMS's actual state afterwards,
+  // since a write can be accepted but overruled (e.g. a fault, or short-circuit trip on inrush).
+  async setDischarge(on) {
+    if (!this.writeChar) throw new Error('Not connected to the battery');
+    let ok = await this.writeMos(on);
+    if (!ok) {
+      // Older firmware only accepts 0xE1 inside factory mode.
+      await this.send(FACTORY_ENTER, CMD_FACTORY_ENTER).catch(() => {});
+      ok = await this.writeMos(on);
+      await this.send(FACTORY_EXIT, CMD_FACTORY_EXIT).catch(() => {});
+    }
+    // Give the BMS a moment to switch before reading back.
+    await sleep(400);
+    const info = parseBasic(await this.request(CMD_BASIC));
+    this.listeners.forEach((l) => l({ info, cells: this.lastCells, at: Date.now() }));
+    if (info.dischargeMos !== on) {
+      throw new Error(ok
+        ? `The BMS accepted the command but output is still ${info.dischargeMos ? 'on' : 'off'}.`
+        : 'The BMS did not accept the command.');
+    }
+    return info;
   }
 
   stop(silent = false) {
@@ -162,6 +201,7 @@ class JbdClient {
     this.notifyChar = null;
     this.writeChar = null;
     this.pending = null;
+    this.queue = Promise.resolve();
   }
 
   async loop() {
@@ -171,6 +211,7 @@ class JbdClient {
       try {
         const info = parseBasic(await this.request(CMD_BASIC));
         const cells = parseCells(await this.request(CMD_CELLS));
+        this.lastCells = cells;
         const r = { info, cells, at: Date.now() };
         this.listeners.forEach((l) => l(r));
       } catch {

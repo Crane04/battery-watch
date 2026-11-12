@@ -8,7 +8,11 @@ export type Target = {
   direction: 'down' | 'up'; // down = discharging past it, up = charging past it
   label: string;
   enabled: boolean;
+  cutoff?: boolean; // down only: also switch the battery output off when this fires
 };
+
+// Turns battery output off; resolves to an error message, or null on success.
+export type CutoffFn = () => Promise<string | null>;
 
 const KEY = 'targets.v1';
 const FIRED_KEY = 'targets.fired.v1';
@@ -55,7 +59,7 @@ async function getFired() {
   return fired;
 }
 
-export async function checkTargets(info: BasicInfo, targets: Target[]) {
+export async function checkTargets(info: BasicInfo, targets: Target[], cutOff?: CutoffFn) {
   const f = await getFired();
   const soc = info.soc;
   const charging = info.current > 0.05;
@@ -76,7 +80,10 @@ export async function checkTargets(info: BasicInfo, targets: Target[]) {
     if (hit && !f.has(t.id)) {
       f.add(t.id);
       changed = true;
-      await fire(t, info);
+      const cut = t.direction === 'down' && t.cutoff && cutOff
+        ? { error: await cutOff() }
+        : null;
+      await fire(t, info, cut);
     } else if (rearm && f.has(t.id)) {
       f.delete(t.id);
       changed = true;
@@ -86,11 +93,16 @@ export async function checkTargets(info: BasicInfo, targets: Target[]) {
   if (changed) await AsyncStorage.setItem(FIRED_KEY, JSON.stringify([...f]));
 }
 
-async function fire(t: Target, info: BasicInfo) {
+async function fire(t: Target, info: BasicInfo, cut: { error: string | null } | null) {
   const watts = Math.abs(Math.round(info.power));
-  const body = t.direction === 'down'
+  let body = t.direction === 'down'
     ? `Battery at ${info.soc}%. Drawing ${watts}W.`
     : `Battery at ${info.soc}%. You can unplug the charger.`;
+  if (cut) {
+    body = cut.error
+      ? `Battery at ${info.soc}%. Couldn't cut output: ${cut.error} Switch the load off yourself.`
+      : `Battery at ${info.soc}%. Output switched off. Turn it back on in Battery Watch.`;
+  }
 
   await Notifications.scheduleNotificationAsync({
     content: {

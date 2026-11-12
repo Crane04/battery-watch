@@ -44,6 +44,17 @@
 
     <section class="card warn" id="protections" hidden></section>
 
+    <section class="card" id="output-card" hidden>
+      <div class="row-between">
+        <div>
+          <h2 class="card-title">Battery output</h2>
+          <div class="card-sub" id="output-sub"></div>
+        </div>
+        <button class="out-btn" id="output-btn"></button>
+      </div>
+      <div class="error" id="output-error" role="alert" hidden></div>
+    </section>
+
     <section class="card" id="cells-card" hidden>
       <div class="row-between">
         <h2 class="card-title">Cells</h2>
@@ -101,6 +112,13 @@
 
       <label class="field-label" for="sheet-name">NAME</label>
       <input class="input" id="sheet-name" type="text" autocomplete="off">
+      <div class="row-between" id="cutoff-row">
+        <div>
+          <div class="toggle-title">Cut off output</div>
+          <div class="card-sub">Switch the battery off (and the inverter with it) when this fires</div>
+        </div>
+        <label class="switch amber"><input type="checkbox" id="sheet-cutoff" aria-label="Cut off output"><span></span></label>
+      </div>
       <div class="preview" id="sheet-preview"></div>
 
       <button class="delete" id="sheet-delete">Delete alert</button>

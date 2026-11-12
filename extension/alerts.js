@@ -29,7 +29,8 @@ async function getFired() {
   return fired;
 }
 
-export async function checkTargets(info, targets) {
+// cutOff: optional async () => error message or null; used by alerts with cutoff: true.
+export async function checkTargets(info, targets, cutOff) {
   const f = await getFired();
   const soc = info.soc;
   const charging = info.current > 0.05;
@@ -50,7 +51,10 @@ export async function checkTargets(info, targets) {
     if (hit && !f.has(t.id)) {
       f.add(t.id);
       changed = true;
-      fire(t, info);
+      const cut = t.direction === 'down' && t.cutoff && cutOff
+        ? { error: await cutOff() }
+        : null;
+      fire(t, info, cut);
     } else if (rearm && f.has(t.id)) {
       f.delete(t.id);
       changed = true;
@@ -60,11 +64,16 @@ export async function checkTargets(info, targets) {
   if (changed) await chrome.storage.local.set({ [FIRED_KEY]: [...f] });
 }
 
-function fire(t, info) {
+function fire(t, info, cut) {
   const watts = Math.abs(Math.round(info.power));
-  const message = t.direction === 'down'
+  let message = t.direction === 'down'
     ? `Battery at ${info.soc}%. Drawing ${watts}W.`
     : `Battery at ${info.soc}%. You can unplug the charger.`;
+  if (cut) {
+    message = cut.error
+      ? `Battery at ${info.soc}%. Couldn't cut output: ${cut.error} Switch the load off yourself.`
+      : `Battery at ${info.soc}%. Output switched off. Turn it back on in Battery Watch.`;
+  }
 
   chrome.notifications.create(`alert-${t.id}-${Date.now()}`, {
     type: 'basic',
@@ -72,6 +81,6 @@ function fire(t, info) {
     title: t.label,
     message,
     priority: 2,
-    requireInteraction: t.direction === 'down' && t.percent <= 20,
+    requireInteraction: !!cut || (t.direction === 'down' && t.percent <= 20),
   });
 }
